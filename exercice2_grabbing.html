@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <title>TP03 - Exercice 2 - Grabbing</title>
+
+  <!-- A-Frame -->
+  <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+  <!-- aframe-extras : fournit movement-controls (déplacement joystick/clavier) -->
+  <script src="https://cdn.jsdelivr.net/npm/aframe-extras@7.2.0/dist/aframe-extras.min.js"></script>
+  <!-- Système physique (cannon.js) : gravité, collisions, static/dynamic-body -->
+  <script src="https://cdn.jsdelivr.net/gh/c-frame/aframe-physics-system@v4.2.2/dist/aframe-physics-system.min.js"></script>
+  <!--
+    IMPORTANT : depuis la 1.4, A-Frame enregistre lui-même un composant
+    `grabbable` (utilisé par le hand-tracking). super-hands essaie d'enregistrer
+    le sien et lève "component `grabbable` has been already registered",
+    ce qui interrompt tout le chargement de la librairie -> aucun grab possible.
+    On supprime donc celui d'A-Frame avant de charger super-hands.
+  -->
+  <script>delete AFRAME.components.grabbable;</script>
+  <!-- super-hands : gestion du hover / grab / release -->
+  <script src="https://unpkg.com/super-hands@3.0.6/dist/super-hands.min.js"></script>
+</head>
+<body>
+
+  <a-scene shadow="type: pcfsoft" physics="driver: local; gravity: -9.8; debug: false">
+
+    <!-- ===================== MIXINS ===================== -->
+    <a-assets>
+      <!--
+        Configuration commune aux "mains" (contrôleurs VR + curseur souris).
+        super-hands doit savoir QUELS événements signalent le survol et l'appui :
+          - survol  : mouseenter / mouseleave émis par le composant `cursor`
+          - appui   : mousedown / mouseup (le curseur les émet sur triggerdown/triggerup en VR)
+      -->
+      <a-mixin id="hand"
+        raycaster="objects: .grabbable; far: 5"
+        super-hands="
+          colliderEvent: mouseenter;
+          colliderEventProperty: intersectedEl;
+          colliderEndEvent: mouseleave;
+          colliderEndEventProperty: intersectedEl;
+          grabStartButtons: mousedown;
+          grabEndButtons: mouseup;
+          dragDropStartButtons: mousedown;
+          dragDropEndButtons: mouseup">
+      </a-mixin>
+
+      <!--
+        Configuration commune aux objets saisissables.
+        usePhysics: never  ->  super-hands déplace l'objet en suivant la main
+        (grab cinématique). Le corps physique est ajouté au relâchement par le
+        script en bas de page, pour que l'objet tombe.
+      -->
+      <a-mixin id="saisissable"
+        hoverable
+        grabbable="usePhysics: never"
+        shadow="cast: true; receive: true">
+      </a-mixin>
+    </a-assets>
+
+    <!-- ===================== LUMIÈRES ===================== -->
+
+    <!-- Lumière directionnelle : génère des ombres réalistes -->
+    <a-entity
+      light="type: directional; color: #FFFFFF; intensity: 0.8; castShadow: true"
+      position="-2 4 2">
+    </a-entity>
+
+    <!-- Lumière ambiante : éclairage doux et uniforme -->
+    <a-entity
+      light="type: ambient; color: #BBBBBB; intensity: 0.5">
+    </a-entity>
+
+    <!-- ===================== OBJETS 3D SAISISSABLES ===================== -->
+    <!-- Pas de corps physique au départ : ils restent en place tant qu'on n'y touche pas -->
+
+    <a-box
+      id="cube"
+      class="grabbable"
+      mixin="saisissable"
+      position="-0.4 1.2 -1.2"
+      width="0.25" height="0.25" depth="0.25"
+      rotation="0 45 0"
+      color="#4CC3D9">
+    </a-box>
+
+    <a-sphere
+      id="balle"
+      class="grabbable"
+      mixin="saisissable"
+      position="0.4 1.2 -1.2"
+      radius="0.15"
+      color="#EF2D5E">
+    </a-sphere>
+
+    <a-cylinder
+      id="cylindre"
+      class="grabbable"
+      mixin="saisissable"
+      position="0 1.2 -1.6"
+      radius="0.12" height="0.3"
+      color="#FFC65D">
+    </a-cylinder>
+
+    <!-- Sol : corps physique statique, sert de surface de collision -->
+    <a-plane
+      static-body
+      position="0 0 -4"
+      rotation="-90 0 0"
+      width="20" height="20"
+      color="#7BC8A4"
+      shadow="cast: false; receive: true">
+    </a-plane>
+
+    <!-- ===================== RIG + CAMÉRA + CONTRÔLEURS ===================== -->
+
+    <a-entity id="rig" movement-controls="fly: false; speed: 0.15" position="0 0 0">
+
+      <!-- Caméra : suit les mouvements de tête.
+           Le `cursor` (rayOrigin: mouse) permet de tester le grab à la souris
+           sur PC, sans casque. En VR, ce sont les lasers qui prennent le relais. -->
+      <a-entity
+        id="camera"
+        camera
+        position="0 1.6 0"
+        look-controls
+        mixin="hand"
+        cursor="rayOrigin: mouse; fuse: false">
+      </a-entity>
+
+      <!-- Contrôleur gauche : laser + grab -->
+      <a-entity
+        id="leftHand"
+        laser-controls="hand: left"
+        mixin="hand">
+      </a-entity>
+
+      <!-- Contrôleur droit : laser + grab -->
+      <a-entity
+        id="rightHand"
+        laser-controls="hand: right"
+        mixin="hand">
+      </a-entity>
+
+    </a-entity>
+
+    <!-- Ciel -->
+    <a-sky color="#ECECEC"></a-sky>
+
+  </a-scene>
+
+  <script>
+    /*
+      Gestion du corps physique autour du grab.
+
+      - grab-start : on enlève le corps physique pour que l'objet suive
+                     librement la main (super-hands pilote sa position).
+      - grab-end   : on lui donne un corps dynamique -> il tombe et réagit
+                     à la gravité. On lui transmet aussi la vitesse du geste
+                     pour pouvoir lancer l'objet.
+    */
+    AFRAME.registerComponent('grab-physics', {
+      init: function () {
+        var el = this.el;
+        this.lastPos = new THREE.Vector3();
+        this.velocity = new THREE.Vector3();
+
+        el.addEventListener('grab-start', function () {
+          el.removeAttribute('dynamic-body');
+          el.object3D.getWorldPosition(this.lastPos);
+          this.velocity.set(0, 0, 0);
+          this.grabbed = true;
+        }.bind(this));
+
+        el.addEventListener('grab-end', function () {
+          this.grabbed = false;
+          el.setAttribute('dynamic-body', 'shape: auto; mass: 1; linearDamping: 0.01');
+          // La vitesse doit être appliquée une fois le corps créé par le moteur
+          var v = this.velocity.clone();
+          el.addEventListener('body-loaded', function apply () {
+            el.removeEventListener('body-loaded', apply);
+            el.body.velocity.set(v.x, v.y, v.z);
+          });
+          if (el.body) { el.body.velocity.set(v.x, v.y, v.z); }
+        }.bind(this));
+
+        // Retour visuel : l'objet s'éclaircit quand il est visé / saisi
+        el.addEventListener('hover-start', function () {
+          el.setAttribute('material', 'opacity', 0.6);
+          el.setAttribute('material', 'transparent', true);
+        });
+        el.addEventListener('hover-end', function () {
+          el.setAttribute('material', 'opacity', 1);
+          el.setAttribute('material', 'transparent', false);
+        });
+      },
+
+      tick: (function () {
+        var current = new THREE.Vector3();
+        return function (time, delta) {
+          if (!this.grabbed || !delta) { return; }
+          this.el.object3D.getWorldPosition(current);
+          // vitesse en m/s, lissée pour éviter les pics
+          this.velocity
+            .copy(current)
+            .sub(this.lastPos)
+            .multiplyScalar(1000 / delta)
+            .clampLength(0, 6);
+          this.lastPos.copy(current);
+        };
+      })()
+    });
+
+    // On applique le composant à tous les objets saisissables
+    document.querySelector('a-scene').addEventListener('loaded', function () {
+      document.querySelectorAll('.grabbable').forEach(function (el) {
+        el.setAttribute('grab-physics', '');
+      });
+    });
+  </script>
+</body>
+</html>

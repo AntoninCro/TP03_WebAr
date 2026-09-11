@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <title>TP03 - Exercice 1 - SceneVR</title>
+  <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+  <!-- aframe-extras : movement-controls n'existe PAS dans A-Frame de base,
+       il vient de cette librairie. Sans elle, le rig ne bouge pas. -->
+  <script src="https://cdn.jsdelivr.net/npm/aframe-extras@7.2.0/dist/aframe-extras.min.js"></script>
+</head>
+<body>
+  <a-scene shadow="type: pcfsoft">
+
+    <!-- ===================== LUMIÈRES ===================== -->
+
+    <!-- Lumière directionnelle : génère des ombres réalistes -->
+    <a-entity
+      light="type: directional; color: #FFFFFF; intensity: 0.8; castShadow: true"
+      position="-2 4 2">
+    </a-entity>
+
+    <!-- Lumière ambiante : éclairage doux et uniforme -->
+    <a-entity
+      light="type: ambient; color: #BBBBBB; intensity: 0.5">
+    </a-entity>
+
+    <!-- ===================== OBJETS 3D ===================== -->
+
+    <!-- Cube -->
+    <a-box
+      position="-1 0.5 -3"
+      rotation="0 45 0"
+      color="#4CC3D9"
+      shadow="cast: true; receive: true">
+    </a-box>
+
+    <!-- Sphère -->
+    <a-sphere
+      position="1 1.25 -3"
+      radius="1.25"
+      color="#EF2D5E"
+      shadow="cast: true; receive: true">
+    </a-sphere>
+
+    <!-- Sol -->
+    <a-plane
+      position="0 0 -4"
+      rotation="-90 0 0"
+      width="20"
+      height="20"
+      color="#7BC8A4"
+      shadow="cast: false; receive: true">
+    </a-plane>
+
+    <!-- ===================== RIG + CAMÉRA + CONTRÔLEURS ===================== -->
+
+    <a-entity id="rig" movement-controls="fly: false; speed: 0.15" position="0 0 0">
+
+      <!-- Caméra : suit les mouvements de tête -->
+      <a-entity
+        id="camera"
+        camera
+        position="0 1.6 0"
+        look-controls>
+      </a-entity>
+
+      <!-- Contrôleur gauche : le joystick pilote movement-controls, qui est
+           posé sur le rig (et non sur la main, sinon c'est la main qui bouge) -->
+      <a-entity
+        id="leftHand"
+        laser-controls="hand: left">
+      </a-entity>
+
+      <!-- Contrôleur droit : rotation de la vue avec le joystick -->
+      <a-entity
+        id="rightHand"
+        laser-controls="hand: right">
+      </a-entity>
+
+    </a-entity>
+
+    <!-- Ciel -->
+    <a-sky color="#ECECEC"></a-sky>
+
+  </a-scene>
+</body>
+</html>
