@@ -1,0 +1,9 @@
+Fichiers téléchargés le 2026-09-11, à re-télécharger tels quels si besoin :
+
+aframe.min.js                  https://aframe.io/releases/1.5.0/aframe.min.js
+aframe-extras.min.js           https://cdn.jsdelivr.net/npm/aframe-extras@7.2.0/dist/aframe-extras.min.js
+aframe-physics-system.min.js   https://cdn.jsdelivr.net/gh/c-frame/aframe-physics-system@v4.2.2/dist/aframe-physics-system.min.js
+super-hands.min.js             https://unpkg.com/super-hands@3.0.6/dist/super-hands.min.js
+
+Attention a l'ordre de chargement dans le HTML :
+aframe -> aframe-extras -> aframe-physics-system -> (delete AFRAME.components.grabbable) -> super-hands

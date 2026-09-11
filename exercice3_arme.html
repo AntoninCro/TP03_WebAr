@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <!--
+    Librairies servies en LOCAL (dossier libs/) plutôt que depuis les CDN.
+    En VR, chaque CDN coûte DNS + TLS + téléchargement sur le réseau du casque,
+    et Brave peut retarder ou bloquer ces requêtes : la scène restait bloquée
+    de longues secondes avant de démarrer. En local, plus aucune requête réseau.
+    URL d'origine de chaque fichier : voir libs/SOURCES.txt
+  -->
+  <meta charset="UTF-8">
+  <title>TP03 - Exercice 3 - Arme en VR</title>
+
+  <!-- A-Frame -->
+  <script src="libs/aframe.min.js"></script>
+  <!-- aframe-extras : movement-controls (déplacement joystick / clavier) -->
+  <script src="libs/aframe-extras.min.js"></script>
+  <!-- Système physique (cannon.js) : gravité, collisions, dynamic-body -->
+  <script src="libs/aframe-physics-system.min.js"></script>
+  <!--
+    A-Frame >= 1.4 enregistre son propre composant `grabbable` (hand-tracking).
+    super-hands essaie d'enregistrer le sien et plante au chargement.
+    On supprime celui d'A-Frame avant de charger super-hands.
+  -->
+  <script>delete AFRAME.components.grabbable;</script>
+  <!-- super-hands : détection du survol et du geste de saisie -->
+  <script src="libs/super-hands.min.js"></script>
+
+  <style>
+    #aide {
+      position: absolute; top: 12px; left: 12px; z-index: 10;
+      font-family: system-ui, sans-serif; font-size: 13px; line-height: 1.5;
+      background: rgba(0,0,0,.6); color: #fff; padding: 10px 14px; border-radius: 6px;
+      pointer-events: none;
+    }
+    #aide b { color: #FFC65D; }
+  </style>
+</head>
+<body>
+
+  <div id="aide">
+    <b>PC</b> — WASD / flèches : se déplacer · souris : viser · <b>G</b> : prendre / lâcher l'arme · <b>clic</b> ou <b>Espace</b> : tirer<br>
+    <b>VR</b> — joystick : se déplacer · <b>grip</b> : prendre / lâcher l'arme · <b>gâchette</b> : tirer
+  </div>
+
+  <a-scene shadow="type: pcfsoft" physics="driver: local; gravity: -9.8; debug: false">
+
+    <a-assets>
+      <!--
+        Mains VR : le laser sert à viser l'arme, le GRIP sert à la saisir.
+        La gâchette reste libre : c'est elle qui tire (voir le composant `arme`).
+      -->
+      <a-mixin id="main-vr"
+        raycaster="objects: .saisissable; far: 5"
+        super-hands="
+          colliderEvent: mouseenter;
+          colliderEventProperty: intersectedEl;
+          colliderEndEvent: mouseleave;
+          colliderEndEventProperty: intersectedEl;
+          grabStartButtons: gripdown;
+          grabEndButtons: gripup">
+      </a-mixin>
+    </a-assets>
+
+    <!-- ===================== LUMIÈRES ===================== -->
+
+    <a-entity
+      light="type: directional; color: #FFFFFF; intensity: 0.8; castShadow: true"
+      position="-2 4 2">
+    </a-entity>
+
+    <a-entity light="type: ambient; color: #BBBBBB; intensity: 0.5"></a-entity>
+
+    <!-- ===================== L'ARME ===================== -->
+    <!--
+      Le modèle est composé de primitives A-Frame. L'entité RACINE est elle-même
+      une <a-box> (la carcasse) : c'est indispensable, car le raycaster d'A-Frame
+      ne teste que les entités qui possèdent leur PROPRE mesh. Une <a-entity> vide
+      servant de conteneur ne serait jamais touchée par le laser.
+
+      Le canon pointe vers -Z : c'est la direction "avant" naturelle d'un
+      contrôleur VR, l'arme se retrouve donc tenue dans le bon sens.
+
+      Pour utiliser un vrai modèle téléchargé (.glb) à la place des primitives :
+        - remplacer <a-box id="arme" ...> par
+          <a-entity id="arme" class="saisissable" hoverable arme
+                    gltf-model="url(mon_pistolet.glb)" ...>
+        - et ajouter à cette entité une géométrie de collision invisible,
+          ou garder le .glb dans un enfant et laisser la boîte comme racine.
+    -->
+    <a-box
+      id="arme"
+      class="saisissable"
+      hoverable
+      arme
+      position="0 0.95 -1"
+      rotation="0 0 0"
+      width="0.045" height="0.06" depth="0.18"
+      color="#2B2F36">
+
+      <!-- Crosse -->
+      <a-box position="0 -0.06 0.05" rotation="-14 0 0"
+             width="0.04" height="0.11" depth="0.05" color="#4A4F57"></a-box>
+      <!-- Pontet + détente -->
+      <a-box position="0 -0.035 -0.005"
+             width="0.02" height="0.035" depth="0.012" color="#1F2228"></a-box>
+      <!-- Canon -->
+      <a-cylinder position="0 0.01 -0.12" rotation="90 0 0"
+                  radius="0.009" height="0.07" color="#8A8F97"></a-cylinder>
+      <!-- Guidon -->
+      <a-box position="0 0.035 -0.075"
+             width="0.006" height="0.012" depth="0.008" color="#8A8F97"></a-box>
+
+      <!--
+        Repère de sortie du canon : c'est depuis SA position monde et dans SA
+        direction (-Z) que le projectile est créé.
+      -->
+      <a-entity class="sortie-canon" position="0 0.01 -0.16"></a-entity>
+    </a-box>
+
+    <!-- Socle qui supporte l'arme au départ -->
+    <a-box static-body position="0 0.45 -1" width="0.35" height="0.9" depth="0.35"
+           color="#9E7B5A" shadow="cast: true; receive: true"></a-box>
+
+    <!-- ===================== CIBLES DE TEST ===================== -->
+    <!-- Caisses physiques : elles encaissent les impacts des projectiles -->
+
+    <!-- Espacées et posées pile sur le sol : si elles s'interpénètrent entre
+         elles ou avec le sol au démarrage, le solveur les éjecte violemment. -->
+    <a-box class="caisse" dynamic-body="shape: box; mass: 0.8"
+           position="-0.7 0.15 -4" width="0.3" height="0.3" depth="0.3"
+           color="#C97B4A" shadow="cast: true; receive: true"></a-box>
+    <a-box class="caisse" dynamic-body="shape: box; mass: 0.8"
+           position="0 0.15 -4" width="0.3" height="0.3" depth="0.3"
+           color="#B5653A" shadow="cast: true; receive: true"></a-box>
+    <a-box class="caisse" dynamic-body="shape: box; mass: 0.8"
+           position="0.7 0.15 -4" width="0.3" height="0.3" depth="0.3"
+           color="#C97B4A" shadow="cast: true; receive: true"></a-box>
+
+    <!-- ===================== SOL ===================== -->
+    <!-- Partie visible -->
+    <a-plane
+      position="0 0 -4"
+      rotation="-90 0 0"
+      width="30" height="30"
+      color="#7BC8A4"
+      shadow="cast: false; receive: true">
+    </a-plane>
+
+    <!--
+      Collision du sol, volontairement séparée du visuel.
+      Un <a-plane static-body> donne une boîte de collision de 0,2 d'épaisseur
+      CENTRÉE sur le plan : sa surface se retrouve 10 cm AU-DESSUS du sol visible.
+      Tout objet posé à sa hauteur réelle se retrouve alors enfoncé dans le sol,
+      et le solveur l'éjecte vers le haut. On utilise donc une boîte explicite
+      dont le dessus est exactement à y = 0.
+    -->
+    <a-box static-body visible="false"
+           position="0 -0.5 -4" width="30" height="1" depth="30"></a-box>
+
+    <!-- ===================== RIG + CAMÉRA + CONTRÔLEURS ===================== -->
+
+    <a-entity id="rig" movement-controls="fly: false; speed: 0.15" position="0 0 0">
+
+      <!--
+        La caméra sert de "main" pour tester sur PC :
+        le curseur souris vise, la touche G saisit, le clic tire.
+      -->
+      <a-entity
+        id="camera"
+        camera
+        position="0 1.6 0"
+        look-controls
+        cursor="rayOrigin: mouse; fuse: false"
+        raycaster="objects: .saisissable; far: 5"
+        super-hands="
+          colliderEvent: mouseenter;
+          colliderEventProperty: intersectedEl;
+          colliderEndEvent: mouseleave;
+          colliderEndEventProperty: intersectedEl;
+          grabStartButtons: prise-debut;
+          grabEndButtons: prise-fin"
+        commandes-bureau>
+      </a-entity>
+
+      <a-entity id="leftHand" laser-controls="hand: left" mixin="main-vr"></a-entity>
+      <a-entity id="rightHand" laser-controls="hand: right" mixin="main-vr"></a-entity>
+
+    </a-entity>
+
+    <a-sky color="#ECECEC"></a-sky>
+
+  </a-scene>
+
+  <script>
+    /* ==========================================================================
+       Composant `arme`
+       - se fait saisir par super-hands (grab-start / grab-end)
+       - s'accroche à la main pour être tenue dans le bon sens
+       - tire un projectile physique quand la gâchette est pressée
+       ========================================================================== */
+    AFRAME.registerComponent('arme', {
+      schema: {
+        vitesse: { default: 20 },        // vitesse initiale du projectile (m/s)
+        cadence: { default: 180 },       // délai minimum entre deux tirs (ms)
+        dureeVie: { default: 5000 },     // durée avant disparition du projectile (ms)
+        masseBalle: { default: 0.12 },   // masse du projectile (kg)
+        // Décalage de l'arme par rapport à l'ORIGINE DU RAYON du contrôleur,
+        // exprimé dans le repère du rayon (z négatif = vers l'avant du tir).
+        // Valeur choisie pour que la CROSSE tombe dans la main : la crosse est
+        // à (0, -0.06, 0.05) dans le repère de l'arme, on compense donc.
+        offsetPosition: { type: 'vec3', default: { x: 0, y: 0.06, z: -0.05 } },
+        // Réglage fin de l'orientation, appliqué APRÈS l'alignement sur le rayon
+        // (en degrés). Mettre x: -5 par exemple pour incliner un peu le canon.
+        offsetRotation: { type: 'vec3', default: { x: 0, y: 0, z: 0 } },
+        // offset utilisé quand c'est la caméra qui "tient" l'arme (test sur PC) :
+        // on la décale en bas à droite comme dans un FPS, sinon elle bouche la vue
+        offsetCamera: { type: 'vec3', default: { x: 0.13, y: -0.18, z: -0.5 } }
+      },
+
+      init: function () {
+        this.porteur = null;
+        this.dernierTir = 0;
+        this.sortie = this.el.querySelector('.sortie-canon');
+
+        this.quat = new THREE.Quaternion();
+        this.posMonde = new THREE.Vector3();
+
+        this.tirer = this.tirer.bind(this);
+
+        this.el.addEventListener('grab-start', this.onPrise.bind(this));
+        this.el.addEventListener('grab-end', this.onLache.bind(this));
+
+        // Retour visuel quand l'arme est visée
+        this.el.addEventListener('hover-start', function () {
+          this.el.setAttribute('material', 'emissive', '#2266AA');
+        }.bind(this));
+        this.el.addEventListener('hover-end', function () {
+          this.el.setAttribute('material', 'emissive', '#000000');
+        }.bind(this));
+      },
+
+      onPrise: function (evt) {
+        // OBLIGATOIRE : sans preventDefault, super-hands considère que la saisie
+        // a été refusée et n'enverra jamais le grab-end correspondant.
+        evt.preventDefault();
+        if (this.porteur) { return; }
+
+        var main = evt.detail.hand;
+        this.porteur = main;
+
+        // Plus de physique tant que l'arme est tenue
+        this.el.removeAttribute('dynamic-body');
+
+        // On accroche l'arme à la main : elle hérite de sa position et de son
+        // orientation, donc elle suit le poignet.
+        main.object3D.add(this.el.object3D);
+
+        if (main.components.camera) {
+          // Test sur PC : l'arme est un "view model" en bas à droite de l'écran
+          this.el.object3D.position.copy(this.data.offsetCamera);
+          this.el.object3D.quaternion.identity();
+        } else {
+          this.alignerSurLeRayon(main);
+        }
+
+        // Réglage fin optionnel, appliqué dans le repère de l'arme
+        var r = this.data.offsetRotation;
+        if (r.x || r.y || r.z) {
+          this.el.object3D.quaternion.multiply(
+            new THREE.Quaternion().setFromEuler(new THREE.Euler(
+              THREE.MathUtils.degToRad(r.x),
+              THREE.MathUtils.degToRad(r.y),
+              THREE.MathUtils.degToRad(r.z)
+            ))
+          );
+        }
+
+        // La gâchette du contrôleur (VR) ou l'événement `tir` (PC) déclenche le tir
+        main.addEventListener('triggerdown', this.tirer);
+        main.addEventListener('tir', this.tirer);
+        this.el.setAttribute('material', 'emissive', '#000000');
+      },
+
+      /*
+        Aligne l'arme sur l'AXE DU LASER du contrôleur, pas sur l'axe -Z de
+        l'entité "main".
+
+        A-Frame incline volontairement le rayon des contrôleurs VR pour qu'il
+        parte dans l'axe de l'index :
+          oculus-touch  -> direction (0, -0.8, -1)      soit ~39° sous -Z
+          vive / wmr    -> direction (0, -0.9, -1)      soit ~42° sous -Z
+          valve-index   -> direction (±0.12, -0.59, -0.79)  soit ~37° sous -Z
+        Une arme simplement posée sur l'axe -Z de la main pointe donc ~40°
+        AU-DESSUS du rayon de visée, et il faut baisser la main pour viser.
+
+        On lit donc l'origine et la direction réelles du raycaster de la main et
+        on y aligne l'arme : le canon suit exactement le laser, quel que soit
+        le type de contrôleur.
+      */
+      alignerSurLeRayon: function (main) {
+        var ray = main.getAttribute('raycaster');
+        var avant = new THREE.Vector3(0, 0, -1);
+        var origine = new THREE.Vector3(0, 0, 0);
+
+        if (ray) {
+          var d = ray.direction;
+          if (d && (d.x || d.y || d.z)) { avant.set(d.x, d.y, d.z).normalize(); }
+          if (ray.origin) { origine.set(ray.origin.x, ray.origin.y, ray.origin.z); }
+        }
+
+        // rotation la plus courte qui amène l'axe -Z de l'arme sur l'axe du rayon
+        var q = new THREE.Quaternion().setFromUnitVectors(
+          new THREE.Vector3(0, 0, -1), avant
+        );
+        this.el.object3D.quaternion.copy(q);
+
+        // offsetPosition est exprimé dans le repère du rayon : on le fait donc
+        // tourner avec q avant de l'ajouter à l'origine du rayon.
+        var o = this.data.offsetPosition;
+        this.el.object3D.position
+          .copy(origine)
+          .add(new THREE.Vector3(o.x, o.y, o.z).applyQuaternion(q));
+      },
+
+      onLache: function (evt) {
+        evt.preventDefault();
+        if (!this.porteur) { return; }
+
+        this.porteur.removeEventListener('triggerdown', this.tirer);
+        this.porteur.removeEventListener('tir', this.tirer);
+        this.porteur = null;
+
+        // On remet l'arme dans la scène en conservant sa transformation monde,
+        // puis on lui rend un corps physique : elle tombe.
+        var pos = new THREE.Vector3();
+        var quat = new THREE.Quaternion();
+        this.el.object3D.getWorldPosition(pos);
+        this.el.object3D.getWorldQuaternion(quat);
+
+        this.el.sceneEl.object3D.add(this.el.object3D);
+
+        var euler = new THREE.Euler().setFromQuaternion(quat);
+        var deg = THREE.MathUtils.radToDeg;
+        this.el.setAttribute('position', { x: pos.x, y: pos.y, z: pos.z });
+        this.el.setAttribute('rotation', {
+          x: deg(euler.x), y: deg(euler.y), z: deg(euler.z)
+        });
+        this.el.setAttribute('dynamic-body', 'shape: box; mass: 1.2');
+      },
+
+      tirer: function () {
+        var maintenant = Date.now();
+        if (maintenant - this.dernierTir < this.data.cadence) { return; }
+        this.dernierTir = maintenant;
+
+        var data = this.data;
+        var scene = this.el.sceneEl;
+
+        // Origine et direction du tir, lues sur le repère de sortie du canon
+        this.sortie.object3D.getWorldPosition(this.posMonde);
+        this.sortie.object3D.getWorldQuaternion(this.quat);
+        var direction = new THREE.Vector3(0, 0, -1)
+          .applyQuaternion(this.quat)
+          .normalize();
+        // on décale l'apparition pour ne pas créer la balle à l'intérieur de l'arme
+        var origine = this.posMonde.clone().addScaledVector(direction, 0.06);
+
+        var balle = document.createElement('a-sphere');
+        balle.setAttribute('class', 'balle');
+        balle.setAttribute('radius', 0.025);
+        balle.setAttribute('color', '#FFC65D');
+        balle.setAttribute('position', { x: origine.x, y: origine.y, z: origine.z });
+        // Composant physique du projectile : il subit la gravité de la scène
+        balle.setAttribute('dynamic-body',
+          'shape: sphere; sphereRadius: 0.025; mass: ' + data.masseBalle +
+          '; linearDamping: 0; angularDamping: 0');
+
+        // Vitesse initiale du projectile.
+        // /!\ Ne PAS l'écrire directement dans balle.body.velocity sur l'événement
+        // `body-loaded` : le moteur rejoue ensuite syncToPhysics() et remet la
+        // vitesse du corps à celle du composant `velocity` (0 0 0). On passe donc
+        // par ce composant, qui est l'API prévue par aframe-physics-system.
+        balle.setAttribute('velocity', {
+          x: direction.x * data.vitesse,
+          y: direction.y * data.vitesse,
+          z: direction.z * data.vitesse
+        });
+
+        scene.appendChild(balle);
+        setTimeout(function () {
+          if (balle.parentNode) { balle.parentNode.removeChild(balle); }
+        }, data.dureeVie);
+
+        this.el.emit('tir-effectue', { direction: direction });
+      }
+    });
+
+    /* ==========================================================================
+       Composant `commandes-bureau`
+       Permet de tester sans casque : G saisit/lâche, clic ou Espace tire.
+       On émet les mêmes événements que ceux déclarés dans grabStartButtons /
+       grabEndButtons de super-hands.
+       ========================================================================== */
+    AFRAME.registerComponent('commandes-bureau', {
+      init: function () {
+        var el = this.el;
+        var tient = false;
+
+        // si l'arme est lâchée autrement, on resynchronise l'état
+        el.sceneEl.addEventListener('arme-lachee', function () { tient = false; });
+
+        window.addEventListener('keydown', function (e) {
+          if (e.code === 'KeyG') {
+            el.emit(tient ? 'prise-fin' : 'prise-debut');
+            tient = !tient;
+          } else if (e.code === 'Space') {
+            e.preventDefault();
+            el.emit('tir');
+          }
+        });
+
+        function brancherClic () {
+          el.sceneEl.canvas.addEventListener('mousedown', function (e) {
+            if (e.button === 0) { el.emit('tir'); }
+          });
+        }
+        // la scène peut déjà être chargée quand ce composant s'initialise
+        if (el.sceneEl.hasLoaded) { brancherClic(); }
+        else { el.sceneEl.addEventListener('loaded', brancherClic); }
+      }
+    });
+  </script>
+</body>
+</html>

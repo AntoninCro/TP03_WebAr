@@ -1,0 +1,1120 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <!--
+    Librairies servies en LOCAL (dossier libs/) plutôt que depuis les CDN.
+   
+  -->
+  <meta charset="UTF-8">
+  <title>TP03 - Exercice 4 - Cibles et particules</title>
+
+  <!-- A-Frame -->
+  <script src="libs/aframe.min.js"></script>
+  <!-- aframe-extras : movement-controls (déplacement joystick / clavier) -->
+  <script src="libs/aframe-extras.min.js"></script>
+  <!-- Système physique (cannon.js) : gravité, collisions, dynamic-body -->
+  <script src="libs/aframe-physics-system.min.js"></script>
+  <script>delete AFRAME.components.grabbable;</script>
+  <!-- super-hands : détection du survol et du geste de saisie -->
+  <script src="libs/super-hands.min.js"></script>
+
+  <style>
+    #aide {
+      position: absolute; top: 12px; left: 12px; z-index: 10;
+      font-family: system-ui, sans-serif; font-size: 13px; line-height: 1.5;
+      background: rgba(0,0,0,.6); color: #fff; padding: 10px 14px; border-radius: 6px;
+      pointer-events: none;
+    }
+    #aide b { color: #FFC65D; }
+    #score {
+      position: absolute; top: 12px; right: 12px; z-index: 10;
+      font-family: system-ui, sans-serif; font-size: 15px; line-height: 1.6;
+      background: rgba(0,0,0,.6); color: #fff; padding: 10px 16px; border-radius: 6px;
+      pointer-events: none; text-align: right;
+    }
+    #score b { color: #7BC8A4; font-size: 22px; }
+    #score .rate { color: #EF2D5E; }
+    #score #htmlEtat { color: #FFFFFF; font-weight: 600; }
+    #score #htmlTemps { color: #FFC65D; font-size: 20px; }
+  </style>
+</head>
+<body>
+
+  <div id="aide">
+    <b>PC</b> — WASD / flèches : se déplacer · souris : viser · <b>G</b> : prendre / lâcher une arme · <b>clic</b> ou <b>Espace</b> : tirer<br>
+    <b>VR</b> — joystick : se déplacer · <b>grip</b> : prendre l'arme visée (une par main) · <b>gâchette</b> : tirer
+  </div>
+
+  <!--
+    Ce panneau HTML n'existe QUE hors VR : 
+  -->
+  <div id="score">
+    <span id="htmlEtat">Prends l'arme pour commencer</span><br>
+    <span id="htmlTemps">60 s</span><br>
+    Touchées : <b id="nbTouchees">0</b><br>
+    <span class="rate">Ratées : <span id="nbRatees">0</span></span>
+  </div>
+
+  <!--
+    fixedTimeStep plus court + maxSubSteps plus élevé que par défaut (1/60, 4) :
+    un projectile à 18 m/s parcourt 30 cm par pas de 1/60 s, soit presque la
+    taille d'une cible -> il la traverse sans collision (tunneling).
+    À 1/120 s il n'avance que de 15 cm par pas, les impacts sont fiables.
+  -->
+  <a-scene shadow="type: pcfsoft"
+           physics="driver: local; gravity: -9.8; debug: false;
+                    fixedTimeStep: 0.00833; maxSubSteps: 8"
+           generateur-cibles="actif: false"
+           pool-sons="taille: 8; volume: 0.9; refDistance: 2.5; rolloffFactor: 1.2"
+           jeu="duree: 60; difficulte: normal">
+
+    <a-assets>
+      <!-- Son d'impact (généré localement, aucun CDN) -->
+      <audio id="sonImpact" src="assets/impact.wav" preload="auto"></audio>
+
+      <!--
+        Mains VR : le laser sert à viser l'arme, le GRIP sert à la saisir.
+        La gâchette reste libre : c'est elle qui tire (voir le composant `arme`).
+      -->
+      <a-mixin id="main-vr"
+        raycaster="objects: .saisissable, .bouton; far: 12"
+        super-hands="
+          colliderEvent: mouseenter;
+          colliderEventProperty: intersectedEl;
+          colliderEndEvent: mouseleave;
+          colliderEndEventProperty: intersectedEl;
+          grabStartButtons: gripdown;
+          grabEndButtons: gripup">
+      </a-mixin>
+    </a-assets>
+
+    <!-- ===================== LUMIÈRES ===================== -->
+
+    <a-entity
+      light="type: directional; color: #FFFFFF; intensity: 0.8; castShadow: true"
+      position="-2 4 2">
+    </a-entity>
+
+    <a-entity light="type: ambient; color: #BBBBBB; intensity: 0.5"></a-entity>
+
+    <!-- ===================== LES DEUX ARMES ===================== -->
+
+    <a-box
+      id="armeGauche"
+      class="saisissable"
+      hoverable
+      arme
+      position="-0.4 0.95 -1"
+      rotation="0 0 0"
+      width="0.045" height="0.06" depth="0.18"
+      color="#2B2F36">
+
+      <!-- Crosse -->
+      <a-box position="0 -0.06 0.05" rotation="-14 0 0"
+             width="0.04" height="0.11" depth="0.05" color="#4A4F57"></a-box>
+      <!-- Pontet + détente -->
+      <a-box position="0 -0.035 -0.005"
+             width="0.02" height="0.035" depth="0.012" color="#1F2228"></a-box>
+      <!-- Canon -->
+      <a-cylinder position="0 0.01 -0.12" rotation="90 0 0"
+                  radius="0.009" height="0.07" color="#8A8F97"></a-cylinder>
+      <!-- Guidon -->
+      <a-box position="0 0.035 -0.075"
+             width="0.006" height="0.012" depth="0.008" color="#8A8F97"></a-box>
+
+      <!--
+        Repère de sortie du canon : c'est depuis SA position monde et dans SA
+        direction (-Z) que le projectile est créé.
+      -->
+      <a-entity class="sortie-canon" position="0 0.01 -0.16"></a-entity>
+    </a-box>
+
+    <a-box
+      id="armeDroite"
+      class="saisissable"
+      hoverable
+      arme
+      position="0.4 0.95 -1"
+      rotation="0 0 0"
+      width="0.045" height="0.06" depth="0.18"
+      color="#2B2F36">
+
+      <!-- Crosse -->
+      <a-box position="0 -0.06 0.05" rotation="-14 0 0"
+             width="0.04" height="0.11" depth="0.05" color="#4A4F57"></a-box>
+      <!-- Pontet + détente -->
+      <a-box position="0 -0.035 -0.005"
+             width="0.02" height="0.035" depth="0.012" color="#1F2228"></a-box>
+      <!-- Canon -->
+      <a-cylinder position="0 0.01 -0.12" rotation="90 0 0"
+                  radius="0.009" height="0.07" color="#8A8F97"></a-cylinder>
+      <!-- Guidon -->
+      <a-box position="0 0.035 -0.075"
+             width="0.006" height="0.012" depth="0.008" color="#8A8F97"></a-box>
+
+      <!--
+        Repère de sortie du canon : c'est depuis SA position monde et dans SA
+        direction (-Z) que le projectile est créé.
+      -->
+      <a-entity class="sortie-canon" position="0 0.01 -0.16"></a-entity>
+    </a-box>
+
+    <!-- Table qui supporte les deux armes au départ -->
+    <a-box static-body position="0 0.45 -1" width="1.4" height="0.9" depth="0.45"
+           color="#9E7B5A" shadow="cast: true; receive: true"></a-box>
+
+    <!-- ===================== PANNEAU DE JEU (lisible en VR) ===================== -->
+    <!--
+
+    -->
+    <a-entity id="panneau" position="0 4.2 -6">
+      <a-plane width="3.4" height="2.2" color="#11151B" opacity="0.9"></a-plane>
+
+      <a-entity id="txtTitre" position="0 0.76 0.01"
+        etiquette="largeur: 3.2; hauteur: 0.40; taillePolice: 0.26; couleur: #FFFFFF"></a-entity>
+      <a-entity id="txtTemps" position="0 0.38 0.01"
+        etiquette="largeur: 3.2; hauteur: 0.34; taillePolice: 0.22; couleur: #FFC65D"></a-entity>
+      <a-entity id="txtScore" position="0 0.04 0.01"
+        etiquette="largeur: 3.2; hauteur: 0.32; taillePolice: 0.20; couleur: #7BC8A4"></a-entity>
+      <a-entity id="txtDiff" position="0 -0.30 0.01"
+        etiquette="largeur: 3.2; hauteur: 0.22; taillePolice: 0.13; couleur: #93A1B5; gras: false;
+                   texte: Difficulté — vise un bouton et appuie sur la gâchette"></a-entity>
+
+      <!-- Boutons : chacun a son propre mesh, donc il est atteignable au laser -->
+      <a-entity id="btnFacile" class="bouton" data-diff="facile" position="-1.21 -0.64 0.02"
+        etiquette="largeur: 0.78; hauteur: 0.30; taillePolice: 0.14; texte: Facile;
+                   fond: #2E3440; bordure: #5A6577"></a-entity>
+      <a-entity id="btnNormal" class="bouton" data-diff="normal" position="-0.4 -0.64 0.02"
+        etiquette="largeur: 0.78; hauteur: 0.30; taillePolice: 0.14; texte: Normal;
+                   fond: #2E3440; bordure: #5A6577"></a-entity>
+      <a-entity id="btnDifficile" class="bouton" data-diff="difficile" position="0.4 -0.64 0.02"
+        etiquette="largeur: 0.78; hauteur: 0.30; taillePolice: 0.14; texte: Difficile;
+                   fond: #2E3440; bordure: #5A6577"></a-entity>
+      <a-entity id="btnImpossible" class="bouton" data-diff="impossible" position="1.21 -0.64 0.02"
+        etiquette="largeur: 0.78; hauteur: 0.30; taillePolice: 0.14; texte: Impossible;
+                   fond: #2E3440; bordure: #5A6577"></a-entity>
+
+      <a-entity id="btnRejouer" class="bouton" data-action="rejouer" position="0 -1.0 0.02"
+        visible="false"
+        etiquette="largeur: 1.5; hauteur: 0.32; taillePolice: 0.18; texte: Rejouer;
+                   fond: #1F6F4A; bordure: #7BC8A4"></a-entity>
+    </a-entity>
+
+    <!-- ===================== CIBLES ===================== -->
+    <!--
+      Les cibles sont créées à la volée par le composant `generateur-cibles`
+      posé sur la scène (voir le script en bas de page). Rien à écrire ici.
+    -->
+
+    <!-- ===================== SOL ===================== -->
+    <!-- Partie visible -->
+    <a-plane
+      position="0 0 -4"
+      rotation="-90 0 0"
+      width="30" height="30"
+      color="#7BC8A4"
+      shadow="cast: false; receive: true">
+    </a-plane>
+
+    <!--
+      Collision du sol, volontairement séparée du visuel.
+      Un <a-plane static-body> donne une boîte de collision de 0,2 d'épaisseur
+      CENTRÉE sur le plan : sa surface se retrouve 10 cm AU-DESSUS du sol visible.
+      Tout objet posé à sa hauteur réelle se retrouve alors enfoncé dans le sol,
+      et le solveur l'éjecte vers le haut. On utilise donc une boîte explicite
+      dont le dessus est exactement à y = 0.
+    -->
+    <a-box static-body visible="false"
+           position="0 -0.5 -4" width="30" height="1" depth="30"></a-box>
+
+    <!-- ===================== RIG + CAMÉRA + CONTRÔLEURS ===================== -->
+
+    <a-entity id="rig" movement-controls="fly: false; speed: 0.15" position="0 0 0">
+
+      <!--
+        La caméra sert de "main" pour tester sur PC :
+        le curseur souris vise, la touche G saisit, le clic tire.
+      -->
+      <a-entity
+        id="camera"
+        camera
+        position="0 1.6 0"
+        look-controls
+        cursor="rayOrigin: mouse; fuse: false"
+        raycaster="objects: .saisissable, .bouton; far: 12"
+        super-hands="
+          colliderEvent: mouseenter;
+          colliderEventProperty: intersectedEl;
+          colliderEndEvent: mouseleave;
+          colliderEndEventProperty: intersectedEl;
+          grabStartButtons: prise-debut;
+          grabEndButtons: prise-fin"
+        commandes-bureau>
+      </a-entity>
+
+      <a-entity id="leftHand" laser-controls="hand: left" mixin="main-vr"></a-entity>
+      <a-entity id="rightHand" laser-controls="hand: right" mixin="main-vr"></a-entity>
+
+    </a-entity>
+
+    <a-sky color="#ECECEC"></a-sky>
+
+  </a-scene>
+
+  <script>
+    /* ==========================================================================
+       Composant `arme`
+       - se fait saisir par super-hands (grab-start / grab-end)
+       - s'accroche à la main pour être tenue dans le bon sens
+       - tire un projectile physique quand la gâchette est pressée
+       ========================================================================== */
+    AFRAME.registerComponent('arme', {
+      schema: {
+        vitesse: { default: 18 },        // vitesse initiale du projectile (m/s)
+        rayonBalle: { default: 0.045 },  // rayon du projectile (m) : plus il est
+                                         // gros, plus les impacts sont fiables
+        cadence: { default: 180 },       // délai minimum entre deux tirs (ms)
+        dureeVie: { default: 5000 },     // durée avant disparition du projectile (ms)
+        masseBalle: { default: 0.12 },   // masse du projectile (kg)
+        // Décalage de l'arme par rapport à l'ORIGINE DU RAYON du contrôleur,
+        // exprimé dans le repère du rayon (z négatif = vers l'avant du tir).
+        // Valeur choisie pour que la CROSSE tombe dans la main : la crosse est
+        // à (0, -0.06, 0.05) dans le repère de l'arme, on compense donc.
+        offsetPosition: { type: 'vec3', default: { x: 0, y: 0.06, z: -0.05 } },
+        // Réglage fin de l'orientation, appliqué APRÈS l'alignement sur le rayon
+        // (en degrés). Mettre x: -5 par exemple pour incliner un peu le canon.
+        offsetRotation: { type: 'vec3', default: { x: 0, y: 0, z: 0 } },
+        // offset utilisé quand c'est la caméra qui "tient" l'arme (test sur PC) :
+        // on la décale en bas à droite comme dans un FPS, sinon elle bouche la vue
+        offsetCamera: { type: 'vec3', default: { x: 0.13, y: -0.18, z: -0.5 } }
+      },
+
+      init: function () {
+        this.porteur = null;
+        this.dernierTir = 0;
+        this.sortie = this.el.querySelector('.sortie-canon');
+
+        this.quat = new THREE.Quaternion();
+        this.posMonde = new THREE.Vector3();
+
+        this.tirer = this.tirer.bind(this);
+
+        this.el.addEventListener('grab-start', this.onPrise.bind(this));
+        this.el.addEventListener('grab-end', this.onLache.bind(this));
+
+        // Retour visuel quand l'arme est visée
+        this.el.addEventListener('hover-start', function () {
+          this.el.setAttribute('material', 'emissive', '#2266AA');
+        }.bind(this));
+        this.el.addEventListener('hover-end', function () {
+          this.el.setAttribute('material', 'emissive', '#000000');
+        }.bind(this));
+      },
+
+      onPrise: function (evt) {
+        // OBLIGATOIRE : sans preventDefault, super-hands considère que la saisie
+        // a été refusée et n'enverra jamais le grab-end correspondant.
+        evt.preventDefault();
+        if (this.porteur) { return; }
+
+        var main = evt.detail.hand;
+        this.porteur = main;
+
+        // Plus de physique tant que l'arme est tenue
+        this.el.removeAttribute('dynamic-body');
+
+        // On accroche l'arme à la main : elle hérite de sa position et de son
+        // orientation, donc elle suit le poignet.
+        main.object3D.add(this.el.object3D);
+
+        if (main.components.camera) {
+          // Test sur PC : l'arme est un "view model" en bas à droite de l'écran
+          this.el.object3D.position.copy(this.data.offsetCamera);
+          this.el.object3D.quaternion.identity();
+        } else {
+          this.alignerSurLeRayon(main);
+        }
+
+        // Réglage fin optionnel, appliqué dans le repère de l'arme
+        var r = this.data.offsetRotation;
+        if (r.x || r.y || r.z) {
+          this.el.object3D.quaternion.multiply(
+            new THREE.Quaternion().setFromEuler(new THREE.Euler(
+              THREE.MathUtils.degToRad(r.x),
+              THREE.MathUtils.degToRad(r.y),
+              THREE.MathUtils.degToRad(r.z)
+            ))
+          );
+        }
+
+        // La gâchette du contrôleur (VR) ou l'événement `tir` (PC) déclenche le tir
+        main.addEventListener('triggerdown', this.tirer);
+        main.addEventListener('tir', this.tirer);
+        this.el.setAttribute('material', 'emissive', '#000000');
+
+        // c'est ce signal qui lance la partie (voir le composant `jeu`)
+        this.el.sceneEl.emit('arme-prise', { main: main });
+      },
+
+      /*
+        Aligne l'arme sur l'AXE DU LASER du contrôleur, pas sur l'axe -Z de
+        l'entité "main".
+
+        A-Frame incline volontairement le rayon des contrôleurs VR pour qu'il
+        parte dans l'axe de l'index :
+          oculus-touch  -> direction (0, -0.8, -1)      soit ~39° sous -Z
+          vive / wmr    -> direction (0, -0.9, -1)      soit ~42° sous -Z
+          valve-index   -> direction (±0.12, -0.59, -0.79)  soit ~37° sous -Z
+        Une arme simplement posée sur l'axe -Z de la main pointe donc ~40°
+        AU-DESSUS du rayon de visée, et il faut baisser la main pour viser.
+
+        On lit donc l'origine et la direction réelles du raycaster de la main et
+        on y aligne l'arme : le canon suit exactement le laser, quel que soit
+        le type de contrôleur.
+      */
+      alignerSurLeRayon: function (main) {
+        var ray = main.getAttribute('raycaster');
+        var avant = new THREE.Vector3(0, 0, -1);
+        var origine = new THREE.Vector3(0, 0, 0);
+
+        if (ray) {
+          var d = ray.direction;
+          if (d && (d.x || d.y || d.z)) { avant.set(d.x, d.y, d.z).normalize(); }
+          if (ray.origin) { origine.set(ray.origin.x, ray.origin.y, ray.origin.z); }
+        }
+
+        // rotation la plus courte qui amène l'axe -Z de l'arme sur l'axe du rayon
+        var q = new THREE.Quaternion().setFromUnitVectors(
+          new THREE.Vector3(0, 0, -1), avant
+        );
+        this.el.object3D.quaternion.copy(q);
+
+        // offsetPosition est exprimé dans le repère du rayon : on le fait donc
+        // tourner avec q avant de l'ajouter à l'origine du rayon.
+        var o = this.data.offsetPosition;
+        this.el.object3D.position
+          .copy(origine)
+          .add(new THREE.Vector3(o.x, o.y, o.z).applyQuaternion(q));
+      },
+
+      onLache: function (evt) {
+        evt.preventDefault();
+        if (!this.porteur) { return; }
+
+        this.porteur.removeEventListener('triggerdown', this.tirer);
+        this.porteur.removeEventListener('tir', this.tirer);
+        this.porteur = null;
+
+        // On remet l'arme dans la scène en conservant sa transformation monde,
+        // puis on lui rend un corps physique : elle tombe.
+        var pos = new THREE.Vector3();
+        var quat = new THREE.Quaternion();
+        this.el.object3D.getWorldPosition(pos);
+        this.el.object3D.getWorldQuaternion(quat);
+
+        this.el.sceneEl.object3D.add(this.el.object3D);
+
+        var euler = new THREE.Euler().setFromQuaternion(quat);
+        var deg = THREE.MathUtils.radToDeg;
+        this.el.setAttribute('position', { x: pos.x, y: pos.y, z: pos.z });
+        this.el.setAttribute('rotation', {
+          x: deg(euler.x), y: deg(euler.y), z: deg(euler.z)
+        });
+        this.el.setAttribute('dynamic-body', 'shape: box; mass: 1.2');
+        this.el.sceneEl.emit('arme-lachee');
+      },
+
+      tirer: function () {
+        var maintenant = Date.now();
+        if (maintenant - this.dernierTir < this.data.cadence) { return; }
+        this.dernierTir = maintenant;
+
+        var data = this.data;
+        var scene = this.el.sceneEl;
+
+        // Origine et direction du tir, lues sur le repère de sortie du canon
+        this.sortie.object3D.getWorldPosition(this.posMonde);
+        this.sortie.object3D.getWorldQuaternion(this.quat);
+        var direction = new THREE.Vector3(0, 0, -1)
+          .applyQuaternion(this.quat)
+          .normalize();
+        // on décale l'apparition pour ne pas créer la balle à l'intérieur de l'arme
+        var origine = this.posMonde.clone()
+          .addScaledVector(direction, 0.03 + data.rayonBalle);
+
+        var balle = document.createElement('a-sphere');
+        balle.setAttribute('class', 'balle');
+        balle.setAttribute('radius', data.rayonBalle);
+        balle.setAttribute('color', '#FFC65D');
+        balle.setAttribute('position', { x: origine.x, y: origine.y, z: origine.z });
+        // Composant physique du projectile : il subit la gravité de la scène
+        balle.setAttribute('dynamic-body',
+          'shape: sphere; sphereRadius: ' + data.rayonBalle + '; mass: ' + data.masseBalle +
+          '; linearDamping: 0; angularDamping: 0');
+
+        // Vitesse initiale du projectile.
+        // /!\ Ne PAS l'écrire directement dans balle.body.velocity sur l'événement
+        // `body-loaded` : le moteur rejoue ensuite syncToPhysics() et remet la
+        // vitesse du corps à celle du composant `velocity` (0 0 0). On passe donc
+        // par ce composant, qui est l'API prévue par aframe-physics-system.
+        balle.setAttribute('velocity', {
+          x: direction.x * data.vitesse,
+          y: direction.y * data.vitesse,
+          z: direction.z * data.vitesse
+        });
+
+        scene.appendChild(balle);
+        setTimeout(function () {
+          if (balle.parentNode) { balle.parentNode.removeChild(balle); }
+        }, data.dureeVie);
+
+        this.el.emit('tir-effectue', { direction: direction });
+      }
+    });
+
+    /* ==========================================================================
+       Composant `cible`
+       Detecte l'impact d'un projectile via les collisions du moteur physique.
+
+       aframe-physics-system relaie l'evenement `collide` de cannon vers le DOM :
+       evt.detail.body est l'AUTRE corps implique, et evt.detail.body.el l'entite
+       correspondante. On filtre donc sur la classe `balle`.
+       ========================================================================== */
+    AFRAME.registerComponent('cible', {
+      schema: {
+        couleur: { type: 'color', default: '#EF2D5E' }
+      },
+
+      init: function () {
+        this.touchee = false;
+        this.el.addEventListener('collide', this.onCollision.bind(this));
+      },
+
+      onCollision: function (evt) {
+        // cannon peut emettre plusieurs contacts pour un meme impact
+        if (this.touchee) { return; }
+        var autre = evt.detail.body && evt.detail.body.el;
+        if (!autre || !autre.classList.contains('balle')) { return; }
+        this.touchee = true;
+
+        var el = this.el;
+        var scene = el.sceneEl;
+        var pos = new THREE.Vector3();
+        el.object3D.getWorldPosition(pos);
+        var couleur = this.data.couleur;
+
+        /*
+          On ne supprime RIEN tout de suite : ce gestionnaire est appele pendant
+          que cannon parcourt sa liste de contacts, et retirer un corps a ce
+          moment-la corrompt l'iteration. On repousse au tour de boucle suivant.
+        */
+        setTimeout(function () {
+          if (autre.parentNode) { autre.parentNode.removeChild(autre); }
+          if (el.parentNode) { el.parentNode.removeChild(el); }
+          creerImpact(scene, pos, couleur);
+          scene.emit('cible-touchee', { position: pos });
+        }, 0);
+      }
+    });
+
+    /* --------------------------------------------------------------------------
+       Cree au point d'impact une entite ephemere qui porte :
+         - le SON positionnel (volume qui decroit avec la distance)
+         - le nuage de particules
+       -------------------------------------------------------------------------- */
+    function creerImpact (scene, position, couleur) {
+      // Son : on reutilise une source deja chargee du pool (voir `pool-sons`)
+      var pool = scene.components['pool-sons'];
+      if (pool) { pool.jouerA(position); }
+
+      // Particules : entite ephemere placee au point d'impact
+      var e = document.createElement('a-entity');
+      e.setAttribute('position', { x: position.x, y: position.y, z: position.z });
+      e.setAttribute('explosion', 'couleur: ' + couleur);
+      scene.appendChild(e);
+    }
+
+    /* ==========================================================================
+       Composant `pool-sons`
+       Cree une fois pour toutes N sources sonores positionnelles, puis les
+       reutilise en tourniquet.
+
+       Pourquoi un pool : si on ajoute un composant `sound` neuf a chaque impact,
+       A-Frame doit charger et decoder le fichier avant de pouvoir jouer, et
+       affiche "Sound not loaded yet" -> le son arrive en retard. Ici les sources
+       sont pretes des le chargement de la scene, il ne reste qu'a les deplacer.
+       ========================================================================== */
+    AFRAME.registerComponent('pool-sons', {
+      schema: {
+        taille: { default: 8 },          // sons simultanes possibles
+        src: { default: '#sonImpact' },
+        /*
+          Reglages d'attenuation du son spatialise :
+            volume        : volume de base
+            refDistance   : distance a laquelle le son est a plein volume
+            rolloffFactor : vitesse de decroissance au-dela
+            maxDistance   : distance au-dela de laquelle on n'attenue plus
+          Baisse `volume` ou monte `rolloffFactor` si les impacts sont trop forts.
+        */
+        volume: { default: 0.9 },
+        refDistance: { default: 2.5 },
+        rolloffFactor: { default: 1.2 },
+        maxDistance: { default: 40 }
+      },
+
+      init: function () {
+        var d = this.data;
+        this.index = 0;
+        this.sources = [];
+        for (var i = 0; i < d.taille; i++) {
+          var e = document.createElement('a-entity');
+          e.setAttribute('sound',
+            'src: ' + d.src + '; autoplay: false; positional: true' +
+            '; volume: ' + d.volume +
+            '; refDistance: ' + d.refDistance +
+            '; rolloffFactor: ' + d.rolloffFactor +
+            '; maxDistance: ' + d.maxDistance);
+          this.el.appendChild(e);
+          this.sources.push(e);
+        }
+      },
+
+      jouerA: function (position) {
+        var e = this.sources[this.index];
+        this.index = (this.index + 1) % this.sources.length;
+        var son = e.components.sound;
+        if (!son) { return; }
+        // les sources sont filles de la scene : position locale = position monde
+        e.object3D.position.copy(position);
+        son.stopSound();
+        son.playSound();
+      }
+    });
+
+    /* ==========================================================================
+       Composant `explosion`
+       Nuage de particules construit directement en three.js plutot qu'avec des
+       entites A-Frame : 16 entites creees et detruites a chaque impact feraient
+       chuter le framerate en VR. Ici c'est un seul objet3D contenant 16 meshes
+       qui partagent la meme geometrie et le meme materiau.
+       ========================================================================== */
+    AFRAME.registerComponent('explosion', {
+      schema: {
+        couleur: { type: 'color', default: '#FFC65D' },
+        nb: { default: 16 },          // nombre de particules
+        vitesse: { default: 3.2 },    // vitesse d'ejection (m/s)
+        duree: { default: 900 },      // duree de vie (ms)
+        taille: { default: 0.05 }     // cote d'une particule (m)
+      },
+
+      init: function () {
+        var d = this.data;
+        this.age = 0;
+        this.fini = false;
+        this.particules = [];
+
+        this.geometrie = new THREE.BoxGeometry(d.taille, d.taille, d.taille);
+        this.materiau = new THREE.MeshStandardMaterial({
+          color: new THREE.Color(d.couleur)
+        });
+
+        var groupe = new THREE.Group();
+        for (var i = 0; i < d.nb; i++) {
+          var mesh = new THREE.Mesh(this.geometrie, this.materiau);
+          // direction aleatoire uniformement repartie sur la sphere
+          var u = Math.random() * 2 - 1;
+          var a = Math.random() * Math.PI * 2;
+          var r = Math.sqrt(1 - u * u);
+          var v = new THREE.Vector3(r * Math.cos(a), u, r * Math.sin(a))
+            .multiplyScalar(d.vitesse * (0.4 + Math.random() * 0.6));
+          mesh.rotation.set(Math.random() * 3, Math.random() * 3, Math.random() * 3);
+          groupe.add(mesh);
+          this.particules.push({ mesh: mesh, v: v });
+        }
+        this.el.setObject3D('particules', groupe);
+      },
+
+      tick: function (time, delta) {
+        if (this.fini) { return; }
+        var s = Math.min(delta, 50) / 1000;   // borne le pas si une frame saute
+        this.age += delta;
+
+        var k = 1 - this.age / this.data.duree;
+        if (k <= 0) {
+          this.fini = true;
+          var el = this.el;
+          setTimeout(function () {
+            if (el.parentNode) { el.parentNode.removeChild(el); }
+          }, 0);
+          return;
+        }
+
+        for (var i = 0; i < this.particules.length; i++) {
+          var p = this.particules[i];
+          p.v.y -= 9.8 * s;                       // les particules tombent
+          p.mesh.position.addScaledVector(p.v, s);
+          p.mesh.scale.setScalar(k);              // et retrecissent en fondu
+          p.mesh.rotation.x += 4 * s;
+          p.mesh.rotation.y += 3 * s;
+        }
+      },
+
+      remove: function () {
+        this.el.removeObject3D('particules');
+        this.geometrie.dispose();
+        this.materiau.dispose();
+      }
+    });
+
+    /* ==========================================================================
+       Composant `generateur-cibles`
+       Fait apparaitre une cible a intervalle regulier, a une position aleatoire
+       dans une zone donnee, tant que le nombre maximum n'est pas atteint.
+       ========================================================================== */
+    AFRAME.registerComponent('generateur-cibles', {
+      schema: {
+        actif: { default: false },      // le composant `jeu` l'active au depart
+        delai: { default: 1200 },       // ms entre deux apparitions
+        maxCibles: { default: 6 },      // cibles presentes simultanement
+        dureeVie: { default: 4000 },    // ms avant qu'une cible non touchee parte
+        facteurTaille: { default: 1 },  // multiplie la taille des cibles
+        zoneMin: { type: 'vec3', default: { x: -3, y: 0.7, z: -8 } },
+        zoneMax: { type: 'vec3', default: { x: 3, y: 2.2, z: -4.5 } }
+      },
+
+      init: function () {
+        this.prochaine = 0;
+        this.couleurs = ['#EF2D5E', '#4CC3D9', '#FFC65D', '#7BC8A4', '#B86BFF'];
+        /*
+          Chaque modele donne la primitive, ses dimensions et la forme de
+          collision associee. On ne laisse pas `shape: auto` deviner : une boite
+          englobante est plus permissive, donc plus agreable au tir.
+        */
+        this.modeles = [
+          { tag: 'a-box', attrs: { width: 0.4, height: 0.4, depth: 0.4 },
+            corps: 'shape: box' },
+          { tag: 'a-cone', attrs: { 'radius-bottom': 0.26, 'radius-top': 0, height: 0.55 },
+            corps: 'shape: box' },
+          { tag: 'a-cylinder', attrs: { radius: 0.2, height: 0.5 },
+            corps: 'shape: box' },
+          { tag: 'a-sphere', attrs: { radius: 0.24 },
+            corps: 'shape: sphere; sphereRadius: 0.24' }
+        ];
+      },
+
+      tick: function (time) {
+        if (!this.data.actif) { return; }
+        if (time < this.prochaine) { return; }
+        this.prochaine = time + this.data.delai;
+        // on ne compte pas les cibles des autres parties
+
+        if (this.el.querySelectorAll('.cible').length >= this.data.maxCibles) {
+          return;
+        }
+        this.creerCible();
+      },
+
+      creerCible: function () {
+        var d = this.data;
+        var modele = this.modeles[Math.floor(Math.random() * this.modeles.length)];
+        var couleur = this.couleurs[Math.floor(Math.random() * this.couleurs.length)];
+
+        var f = d.facteurTaille;
+        var cible = document.createElement(modele.tag);
+        // toutes les dimensions sont mises a l'echelle par le facteur de difficulte
+        for (var k in modele.attrs) { cible.setAttribute(k, modele.attrs[k] * f); }
+        cible.setAttribute('class', 'cible');
+        cible.setAttribute('color', couleur);
+        cible.setAttribute('position', {
+          x: d.zoneMin.x + Math.random() * (d.zoneMax.x - d.zoneMin.x),
+          y: d.zoneMin.y + Math.random() * (d.zoneMax.y - d.zoneMin.y),
+          z: d.zoneMin.z + Math.random() * (d.zoneMax.z - d.zoneMin.z)
+        });
+        cible.setAttribute('shadow', 'cast: true; receive: false');
+        /*
+          static-body : la cible flotte sur place au lieu de tomber, mais elle
+          participe quand meme aux collisions.
+          Ne PAS animer son `scale` a l'apparition : la forme de collision est
+          calculee une seule fois, a la creation du corps. Une cible qui naitrait
+          a scale 0 aurait une boite de collision degeneree.
+        */
+        // la forme de collision doit suivre la meme echelle que le visuel
+        var corps = (modele.tag === 'a-sphere')
+          ? 'shape: sphere; sphereRadius: ' + (modele.attrs.radius * f)
+          : modele.corps;
+        cible.setAttribute('static-body', corps);
+        cible.setAttribute('cible', 'couleur: ' + couleur);
+
+        this.el.appendChild(cible);
+
+        // Une cible non touchee finit par disparaitre : c'est un tir rate.
+        var scene = this.el;
+        setTimeout(function () {
+          if (cible.parentNode && cible.components.cible &&
+              !cible.components.cible.touchee) {
+            cible.parentNode.removeChild(cible);
+            scene.emit('cible-ratee');
+          }
+        }, d.dureeVie);
+      }
+    });
+
+    /* ==========================================================================
+       Composant `etiquette`
+       Dessine du texte (et un fond arrondi optionnel) dans un canvas 2D utilise
+       comme texture d'un plan.
+
+       Pourquoi pas le composant `text` d'A-Frame : sa police MSDF par defaut ne
+       contient que 95 glyphes ASCII, donc ni é ni è ni à. Un canvas 2D utilise
+       les polices du systeme et gere tout l'Unicode. Bonus : plus aucun fichier
+       de police a telecharger.
+
+       L'entite recoit son propre object3D 'mesh', ce qui la rend atteignable par
+       le raycaster : c'est ce qui permet de s'en servir comme bouton.
+       ========================================================================== */
+    AFRAME.registerComponent('etiquette', {
+      schema: {
+        texte: { default: '' },
+        largeur: { default: 1 },          // m
+        hauteur: { default: 0.3 },        // m
+        taillePolice: { default: 0.16 },  // m
+        couleur: { type: 'color', default: '#FFFFFF' },
+        fond: { default: '' },            // vide = transparent
+        bordure: { default: '' },
+        gras: { default: true },
+        rayon: { default: 0.05 }          // m, arrondi du fond
+      },
+
+      init: function () {
+        this.PX_PAR_METRE = 256;
+        this.canvas = document.createElement('canvas');
+        this.ctx = this.canvas.getContext('2d');
+
+        this.texture = new THREE.CanvasTexture(this.canvas);
+        this.texture.minFilter = THREE.LinearFilter;   // canvas non power-of-two
+        this.texture.colorSpace = THREE.SRGBColorSpace;
+
+        this.materiau = new THREE.MeshBasicMaterial({
+          map: this.texture, transparent: true
+        });
+        this.geometrie = new THREE.PlaneGeometry(this.data.largeur, this.data.hauteur);
+        this.mesh = new THREE.Mesh(this.geometrie, this.materiau);
+        this.el.setObject3D('mesh', this.mesh);
+
+        this.dernierFormat = '';
+        this.dessiner();
+      },
+
+      update: function () { this.dessiner(); },
+
+      dessiner: function () {
+        var d = this.data;
+        var PX = this.PX_PAR_METRE;
+        var w = Math.max(8, Math.round(d.largeur * PX));
+        var h = Math.max(8, Math.round(d.hauteur * PX));
+
+        var format = w + 'x' + h;
+        if (format !== this.dernierFormat) {
+          this.dernierFormat = format;
+          this.canvas.width = w;
+          this.canvas.height = h;
+          this.geometrie.dispose();
+          this.geometrie = new THREE.PlaneGeometry(d.largeur, d.hauteur);
+          this.mesh.geometry = this.geometrie;
+        }
+
+        var c = this.ctx;
+        c.clearRect(0, 0, w, h);
+
+        if (d.fond || d.bordure) {
+          var r = Math.min(d.rayon * PX, h / 2);
+          c.beginPath();
+          if (c.roundRect) { c.roundRect(2, 2, w - 4, h - 4, r); }
+          else { c.rect(2, 2, w - 4, h - 4); }
+          if (d.fond) { c.fillStyle = d.fond; c.fill(); }
+          if (d.bordure) { c.lineWidth = 4; c.strokeStyle = d.bordure; c.stroke(); }
+        }
+
+        c.fillStyle = d.couleur;
+        c.textAlign = 'center';
+        c.textBaseline = 'middle';
+
+        // police demandee, puis reduction si le texte deborde de l'etiquette
+        var police = function (px) {
+          return (d.gras ? 'bold ' : '') + px + 'px system-ui, "Segoe UI", Roboto, sans-serif';
+        };
+        var px = Math.round(d.taillePolice * PX);
+        c.font = police(px);
+        var maxLargeur = w - 0.06 * PX;
+        var mesure = c.measureText(d.texte).width;
+        if (mesure > maxLargeur && mesure > 0) {
+          c.font = police(Math.max(8, Math.floor(px * maxLargeur / mesure)));
+        }
+
+        c.fillText(d.texte, w / 2, h / 2);
+
+        this.texture.needsUpdate = true;
+      },
+
+      remove: function () {
+        this.el.removeObject3D('mesh');
+        this.geometrie.dispose();
+        this.materiau.dispose();
+        this.texture.dispose();
+      }
+    });
+
+    /* ==========================================================================
+       Composant `jeu`
+       Machine a etats de la partie :
+         attente  -> aucune cible, on attend que le joueur prenne l'arme
+         enCours  -> le generateur tourne, le chrono descend
+         termine  -> score final, bouton Rejouer
+
+       La partie ne demarre qu'a la prise de l'arme : en VR, entrer dans le casque
+       prend du temps, et sans ca le chrono serait deja bien entame avant meme que
+       le joueur soit pret.
+       ========================================================================== */
+    AFRAME.registerComponent('jeu', {
+      schema: {
+        duree: { default: 60 },              // duree d'une partie, en secondes
+        difficulte: { default: 'normal' }
+      },
+
+      init: function () {
+        var self = this;
+
+        /*
+          Reglages par difficulte, modifiables en jeu depuis le panneau :
+            delai         : temps entre deux apparitions de cible
+            maxCibles     : cibles presentes simultanement
+            dureeVie      : temps laisse au joueur avant qu'une cible disparaisse
+            facteurTaille : multiplie la taille des cibles
+        */
+        this.niveaux = {
+          facile:    { libelle: 'Facile',    delai: 1700, maxCibles: 5, dureeVie: 6000, facteurTaille: 1.35 },
+          normal:    { libelle: 'Normal',    delai: 1200, maxCibles: 6, dureeVie: 4000, facteurTaille: 1.00 },
+          difficile: { libelle: 'Difficile', delai:  700, maxCibles: 8, dureeVie: 2200, facteurTaille: 0.70 },
+          /*
+            Impossible : cibles deux fois plus petites qu'en Normal et a peine
+            plus d'une seconde pour les atteindre.
+            On ne descend pas facteurTaille sous 0.55 : une cible de 0.22 m face
+            a un projectile qui avance de 0.15 m par pas de simulation
+            commencerait a passer au travers sans declencher de collision.
+          */
+          impossible: { libelle: 'Impossible', delai: 450, maxCibles: 10, dureeVie: 1150, facteurTaille: 0.55 }
+        };
+        this.difficulte = this.niveaux[this.data.difficulte] ? this.data.difficulte : 'normal';
+
+        this.etat = 'attente';
+        this.touchees = 0;
+        this.ratees = 0;
+        this.tempsRestant = this.data.duree;
+        this.derniereSeconde = -1;
+
+        this.el.addEventListener('cible-touchee', function () {
+          if (self.etat !== 'enCours') { return; }
+          self.touchees++;
+          self.afficher();
+        });
+        this.el.addEventListener('cible-ratee', function () {
+          if (self.etat !== 'enCours') { return; }
+          self.ratees++;
+          self.afficher();
+        });
+        // reprendre l'arme relance une partie, sauf si une est deja en cours
+        this.el.addEventListener('arme-prise', function () {
+          if (self.etat !== 'enCours') { self.demarrer(); }
+        });
+
+        // les enfants de la scene n'existent pas forcement quand un composant de
+        // scene s'initialise : on attend le chargement complet
+        if (this.el.hasLoaded) { this.brancherBoutons(); }
+        else { this.el.addEventListener('loaded', function () { self.brancherBoutons(); }); }
+      },
+
+      brancherBoutons: function () {
+        var self = this;
+        this.boutons = Array.prototype.slice.call(this.el.querySelectorAll('.bouton'));
+        this.boutons.forEach(function (b) {
+          // `click` est emis par le composant `cursor`, que laser-controls
+          // installe sur chaque main : la gachette suffit donc a cliquer.
+          b.addEventListener('click', function () { self.onBouton(b); });
+          b.addEventListener('mouseenter', function () {
+            b.setAttribute('etiquette', 'bordure', '#FFC65D');
+          });
+          b.addEventListener('mouseleave', function () { self.afficher(); });
+        });
+        this.afficher();
+      },
+
+      onBouton: function (b) {
+        if (b.dataset.action === 'rejouer') {
+          if (this.etat === 'termine') { this.demarrer(); }
+          return;
+        }
+        if (b.dataset.diff && this.niveaux[b.dataset.diff]) {
+          this.choisirDifficulte(b.dataset.diff);
+        }
+      },
+
+      // applique la difficulte tout de suite, meme en pleine partie
+      choisirDifficulte: function (nom) {
+        this.difficulte = nom;
+        var n = this.niveaux[nom];
+        this.el.setAttribute('generateur-cibles', {
+          delai: n.delai,
+          maxCibles: n.maxCibles,
+          dureeVie: n.dureeVie,
+          facteurTaille: n.facteurTaille
+        });
+        this.afficher();
+      },
+
+      demarrer: function () {
+        var n = this.niveaux[this.difficulte];
+        this.viderCibles();
+        this.touchees = 0;
+        this.ratees = 0;
+        this.tempsRestant = this.data.duree;
+        this.derniereSeconde = -1;
+        this.el.setAttribute('generateur-cibles', {
+          actif: true,
+          delai: n.delai,
+          maxCibles: n.maxCibles,
+          dureeVie: n.dureeVie,
+          facteurTaille: n.facteurTaille
+        });
+        this.etat = 'enCours';
+        this.afficher();
+        this.el.emit('partie-demarree');
+      },
+
+      terminer: function () {
+        this.etat = 'termine';
+        this.el.setAttribute('generateur-cibles', 'actif', false);
+        this.viderCibles();
+        this.afficher();
+        this.el.emit('partie-terminee', { touchees: this.touchees, ratees: this.ratees });
+      },
+
+      viderCibles: function () {
+        // les cibles retirees ici ne comptent pas comme ratees : leur minuterie
+        // verifie parentNode, qui vaut null une fois l'element detache
+        var cibles = this.el.querySelectorAll('.cible');
+        for (var i = 0; i < cibles.length; i++) {
+          if (cibles[i].parentNode) { cibles[i].parentNode.removeChild(cibles[i]); }
+        }
+      },
+
+      tick: function (time, delta) {
+        if (this.etat !== 'enCours') { return; }
+        this.tempsRestant -= delta / 1000;
+        if (this.tempsRestant <= 0) {
+          this.tempsRestant = 0;
+          this.terminer();
+          return;
+        }
+        var s = Math.ceil(this.tempsRestant);
+        if (s !== this.derniereSeconde) {
+          this.derniereSeconde = s;
+          this.afficher();
+        }
+      },
+
+      afficher: function () {
+        var titre, temps, score;
+        var s = Math.ceil(this.tempsRestant);
+
+        if (this.etat === 'attente') {
+          titre = 'Stand de tir';
+          temps = "Prends l'arme pour commencer";
+          score = 'Partie de ' + this.data.duree + ' secondes';
+        } else if (this.etat === 'enCours') {
+          titre = 'En cours';
+          temps = s + ' s';
+          score = 'Touchées ' + this.touchees + '   •   Ratées ' + this.ratees;
+        } else {
+          titre = 'Terminé';
+          temps = 'Score : ' + this.touchees;
+          score = 'Touchées ' + this.touchees + '   •   Ratées ' + this.ratees;
+        }
+
+        this.majEtiquette('#txtTitre', titre);
+        this.majEtiquette('#txtTemps', temps);
+        this.majEtiquette('#txtScore', score);
+
+        // boutons : on marque la difficulte choisie
+        if (this.boutons) {
+          var self = this;
+          this.boutons.forEach(function (b) {
+            if (b.dataset.action === 'rejouer') {
+              b.setAttribute('visible', self.etat === 'termine');
+              b.setAttribute('etiquette', 'bordure', '#7BC8A4');
+              return;
+            }
+            var choisi = b.dataset.diff === self.difficulte;
+            b.setAttribute('etiquette', {
+              fond: choisi ? '#1F4E6F' : '#2E3440',
+              bordure: choisi ? '#4CC3D9' : '#5A6577'
+            });
+          });
+        }
+
+        // meme information dans le HUD HTML, utile hors casque
+        this.majTexte('#htmlEtat', titre === 'En cours' ? 'Partie en cours' : titre);
+        this.majTexte('#htmlTemps', this.etat === 'attente'
+          ? "Prends l'arme (G) pour commencer"
+          : s + ' s');
+        this.majTexte('#nbTouchees', this.touchees);
+        this.majTexte('#nbRatees', this.ratees);
+      },
+
+      majEtiquette: function (selecteur, valeur) {
+        var el = this.el.querySelector(selecteur);
+        if (el) { el.setAttribute('etiquette', 'texte', valeur); }
+      },
+
+      majTexte: function (selecteur, valeur) {
+        var el = document.querySelector(selecteur);
+        if (el) { el.textContent = valeur; }
+      }
+    });
+
+    /* ==========================================================================
+       Composant `commandes-bureau`
+       Permet de tester sans casque : G saisit/lâche, clic ou Espace tire.
+       On émet les mêmes événements que ceux déclarés dans grabStartButtons /
+       grabEndButtons de super-hands.
+       ========================================================================== */
+    AFRAME.registerComponent('commandes-bureau', {
+      init: function () {
+        var el = this.el;
+        var tient = false;
+
+        // si l'arme est lâchée autrement, on resynchronise l'état
+        el.sceneEl.addEventListener('arme-lachee', function () { tient = false; });
+
+        window.addEventListener('keydown', function (e) {
+          if (e.code === 'KeyG') {
+            el.emit(tient ? 'prise-fin' : 'prise-debut');
+            tient = !tient;
+          } else if (e.code === 'Space') {
+            e.preventDefault();
+            el.emit('tir');
+          }
+        });
+
+        function brancherClic () {
+          el.sceneEl.canvas.addEventListener('mousedown', function (e) {
+            if (e.button === 0) { el.emit('tir'); }
+          });
+        }
+        // la scène peut déjà être chargée quand ce composant s'initialise
+        if (el.sceneEl.hasLoaded) { brancherClic(); }
+        else { el.sceneEl.addEventListener('loaded', brancherClic); }
+      }
+    });
+  </script>
+</body>
+</html>

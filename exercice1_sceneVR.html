@@ -1,12 +1,19 @@
 <!DOCTYPE html>
 <html lang="fr">
 <head>
+  <!--
+    Librairies servies en LOCAL (dossier libs/) plutôt que depuis les CDN.
+    En VR, chaque CDN coûte DNS + TLS + téléchargement sur le réseau du casque,
+    et Brave peut retarder ou bloquer ces requêtes : la scène restait bloquée
+    de longues secondes avant de démarrer. En local, plus aucune requête réseau.
+    URL d'origine de chaque fichier : voir libs/SOURCES.txt
+  -->
   <meta charset="UTF-8">
   <title>TP03 - Exercice 1 - SceneVR</title>
-  <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+  <script src="libs/aframe.min.js"></script>
   <!-- aframe-extras : movement-controls n'existe PAS dans A-Frame de base,
        il vient de cette librairie. Sans elle, le rig ne bouge pas. -->
-  <script src="https://cdn.jsdelivr.net/npm/aframe-extras@7.2.0/dist/aframe-extras.min.js"></script>
+  <script src="libs/aframe-extras.min.js"></script>
 </head>
 <body>
   <a-scene shadow="type: pcfsoft">

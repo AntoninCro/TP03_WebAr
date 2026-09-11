@@ -1,15 +1,22 @@
 <!DOCTYPE html>
 <html lang="fr">
 <head>
+  <!--
+    Librairies servies en LOCAL (dossier libs/) plutôt que depuis les CDN.
+    En VR, chaque CDN coûte DNS + TLS + téléchargement sur le réseau du casque,
+    et Brave peut retarder ou bloquer ces requêtes : la scène restait bloquée
+    de longues secondes avant de démarrer. En local, plus aucune requête réseau.
+    URL d'origine de chaque fichier : voir libs/SOURCES.txt
+  -->
   <meta charset="UTF-8">
   <title>TP03 - Exercice 2 - Grabbing</title>
 
   <!-- A-Frame -->
-  <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+  <script src="libs/aframe.min.js"></script>
   <!-- aframe-extras : fournit movement-controls (déplacement joystick/clavier) -->
-  <script src="https://cdn.jsdelivr.net/npm/aframe-extras@7.2.0/dist/aframe-extras.min.js"></script>
+  <script src="libs/aframe-extras.min.js"></script>
   <!-- Système physique (cannon.js) : gravité, collisions, static/dynamic-body -->
-  <script src="https://cdn.jsdelivr.net/gh/c-frame/aframe-physics-system@v4.2.2/dist/aframe-physics-system.min.js"></script>
+  <script src="libs/aframe-physics-system.min.js"></script>
   <!--
     IMPORTANT : depuis la 1.4, A-Frame enregistre lui-même un composant
     `grabbable` (utilisé par le hand-tracking). super-hands essaie d'enregistrer
@@ -19,7 +26,7 @@
   -->
   <script>delete AFRAME.components.grabbable;</script>
   <!-- super-hands : gestion du hover / grab / release -->
-  <script src="https://unpkg.com/super-hands@3.0.6/dist/super-hands.min.js"></script>
+  <script src="libs/super-hands.min.js"></script>
 </head>
 <body>
 
@@ -103,15 +110,26 @@
       color="#FFC65D">
     </a-cylinder>
 
-    <!-- Sol : corps physique statique, sert de surface de collision -->
+    <!-- ===================== SOL ===================== -->
+    <!-- Partie visible -->
     <a-plane
-      static-body
       position="0 0 -4"
       rotation="-90 0 0"
       width="20" height="20"
       color="#7BC8A4"
       shadow="cast: false; receive: true">
     </a-plane>
+
+    <!--
+      Collision du sol, volontairement séparée du visuel.
+      Un <a-plane static-body> donne une boîte de collision de 0,2 d'épaisseur
+      CENTRÉE sur le plan : sa surface se retrouve 10 cm AU-DESSUS du sol visible.
+      Tout objet posé à sa hauteur réelle se retrouve alors enfoncé dans le sol,
+      et le solveur l'éjecte vers le haut. On utilise donc une boîte explicite
+      dont le dessus est exactement à y = 0.
+    -->
+    <a-box static-body visible="false"
+           position="0 -0.5 -4" width="20" height="1" depth="20"></a-box>
 
     <!-- ===================== RIG + CAMÉRA + CONTRÔLEURS ===================== -->
 
